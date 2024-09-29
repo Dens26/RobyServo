@@ -9,7 +9,7 @@
 // Macros /////////////////////////////////////////////////////////////////////
 
 #define sendData(packet, length)  	(varSerial->write(packet, length))    	// Write Over Serial
-#define flush()						(varSerial->flush())					// Wait until buffer empty
+#define serialFlush()				(varSerial->flush())					// Wait until buffer empty
 #define availableData() 			(varSerial->available())    			// Check Serial Data Available
 #define readData()      			(varSerial->read())         			// Read Serial Data
 #define peekData()      			(varSerial->peek())         			// Peek Serial Data
@@ -22,6 +22,122 @@
 #define delayus(args) 				(delayMicroseconds(args))  				// Delay Microseconds
 
 // Private Methods ////////////////////////////////////////////////////////////
+void RobyServo::sendSyncData(const uint8_t data)
+{
+	if(varSerial)
+	{
+		varSerial->write(data);
+		varSerial->flush();
+	}
+}
+
+int RobyServo::dataSizePerServoSynch()
+{
+	if(use_speed_synch)
+		return AX12_SYNCH_PER_SERVO_WSPEED;
+	else
+		return AX12_SYNCH_PER_SERVO_WOSPEED;
+}
+
+void RobyServo::printSyncData(int length, unsigned char checksum)
+{
+	int data_size_per_servo = dataSizePerServoSynch();
+    int Checksum = BROADCAST_ID + length + AX_SYNC_WRITE + AX_GOAL_POSITION_L + (data_size_per_servo-1);
+	
+    
+	Serial.print(0xFF, HEX);  
+	Serial.print(", ");
+
+	Serial.print(0xFF, HEX);  
+	Serial.print(", ");
+
+	Serial.print(BROADCAST_ID, HEX);  
+	Serial.print(", ");
+
+	Serial.print(length, HEX);  
+	Serial.print(", ");
+
+	Serial.print(AX_SYNC_WRITE, HEX);  
+	Serial.print(", ");
+
+	Serial.print(AX_GOAL_POSITION_L, HEX);  
+	Serial.print(", ");
+
+	Serial.print(data_size_per_servo-1, HEX);  
+	Serial.print(", ");
+	
+	int dataidx=0, id=0, temp=0;
+    for(int servo=0; servo<total_sync_servos; servo++)
+    {
+		//Now write the data for the servo
+		for(int servo_data_idx=0; servo_data_idx<data_size_per_servo; servo_data_idx++)
+		{
+			temp = sync_data[dataidx];
+			Serial.print(temp, HEX);  
+			Serial.print(", ");
+			Checksum += temp;
+			dataidx++;
+		}
+    } 
+	unsigned char sum = (0xff - (Checksum % 256));
+    
+	Serial.print(checksum, HEX);  
+	//Serial.print(sum, HEX);  
+	Serial.print("\n");
+}
+
+void RobyServo::startSyncWrite(bool use_speed)
+{
+	total_sync_servos = 0;
+	use_speed_synch = use_speed;
+}
+
+int RobyServo::getLowByte(int val) 
+{
+	return (val & 0xff);
+};
+
+int RobyServo::getHighByte(int val) 
+{
+	return ((val & 0xff00)>> 8);
+};
+
+void RobyServo::addServoToSync(int id, int goal_pos, int goal_speed)
+{
+	int data_size_per_servo = dataSizePerServoSynch();
+
+	int idx = total_sync_servos*data_size_per_servo;
+
+	sync_data[idx] = id;
+	sync_data[idx+1] = getLowByte(goal_pos);
+	sync_data[idx+2] = getHighByte(goal_pos);
+
+	if(use_speed_synch) {
+		sync_data[idx+3] = getLowByte(goal_speed);
+		sync_data[idx+4] = getHighByte(goal_speed);
+	}
+	
+	//Serial.print("servos: ");  
+	//Serial.print(total_sync_servos);  
+	//Serial.print(" idx: ");  
+	//Serial.print(idx);  
+	//Serial.print(" id: ");  
+	//Serial.print(id);  
+	//Serial.print(" pos: ");  
+	//Serial.print(goal_pos); 
+	//Serial.print(" speed: ");  
+	//Serial.print(goal_speed); 
+	//Serial.print("\n");
+		
+	//for(int i=0; i<(idx+data_size_per_servo); i++)
+	//{
+	//	Serial.print(sync_data[i], HEX);  
+	//	Serial.print(", ");
+	//}
+	//Serial.println("\n");
+
+    total_sync_servos++;	
+}
 
 int RobyServo::read_error(void)
 {
@@ -952,7 +1068,7 @@ int RobyServo::sendAXPacket(unsigned char * packet, unsigned int length)
 	switchCom(Direction_Pin, TX_MODE); 	// Switch to Transmission  Mode
 
 	sendData(packet, length);			// Send data through sending buffer
-	flush(); 							// Wait until buffer is empty
+	serialFlush(); 							// Wait until buffer is empty
 
 	switchCom(Direction_Pin, RX_MODE); 	// Switch back to Reception Mode
 
@@ -961,19 +1077,12 @@ int RobyServo::sendAXPacket(unsigned char * packet, unsigned int length)
 
 void RobyServo::sendAXPacketNoError(unsigned char * packet, unsigned int length)
 {
-    // Mettre le bus en mode transmission
-    switchCom(Direction_Pin, TX_MODE);
-    delayMicroseconds(500); // Délai augmenté à 500 microsecondes
+	switchCom(Direction_Pin, TX_MODE); 	// Switch to Transmission  Mode
 
-    // Envoi du paquet
-    sendData(packet, length);
-    flush(); // Attendre la fin de l'envoi
+	sendData(packet, length);			// Send data through sending buffer
+	serialFlush(); 							// Wait until buffer is empty
 
-    delayMicroseconds(500); // Délai augmenté à 500 microsecondes
-
-    // Remettre le bus en mode réception
-    switchCom(Direction_Pin, RX_MODE);
-    delayMicroseconds(500); // Délai augmenté à 500 microsecondes
+	switchCom(Direction_Pin, RX_MODE); 	// Switch back to Reception Mode
 }
 
 int RobyServo::readRegister(unsigned char ID, unsigned char reg, unsigned char reg_len)
@@ -1028,68 +1137,44 @@ int RobyServo::readRegister(unsigned char ID, unsigned char reg, unsigned char r
 	return (returned_Byte);     // Returns the read position
 }
 
-int RobyServo::syncWrite(unsigned char IDs[], int Positions[], int NumServos, int Speed)
-{
-    const unsigned char data_length_per_servo = 4; // Position_L, Position_H, Speed_L, Speed_H
+void RobyServo::writeSyncData(bool print_data)
+{	
+    int temp;
+	int data_size_per_servo = dataSizePerServoSynch();
 
-    // Calcul du nombre de paramètres
-    unsigned int parameter_length = 1  // Instruction
-                                  + 1  // Adresse de départ
-                                  + 1  // Longueur des données par servo
-                                  + NumServos * (1 + data_length_per_servo); // ID + données par servo
+	int	length = 4 + (data_size_per_servo * total_sync_servos);		
+    int Checksum = 254 + length + AX_SYNC_WRITE + AX_GOAL_POSITION_L + (data_size_per_servo-1);
 
-    // Calcul du champ Length
-    unsigned char length = parameter_length + 2; // Nombre de paramètres + 2
+	switchCom(Direction_Pin,TX_MODE);
+    sendSyncData(AX_START);
+    sendSyncData(AX_START);
+    sendSyncData(BROADCAST_ID);
+    sendSyncData(length);
+    sendSyncData(AX_SYNC_WRITE);
+    sendSyncData(AX_GOAL_POSITION_L);
+    sendSyncData(data_size_per_servo-1);
 
-    // Création du paquet
-    unsigned char packet[parameter_length + 4]; // Headers (2) + ID + Length + Parameters + Checksum
-    unsigned int index = 0;
-
-    // Header
-    packet[index++] = 0xFF;
-    packet[index++] = 0xFF;
-    packet[index++] = BROADCAST_ID;          // ID = 0xFE pour le broadcast
-    packet[index++] = length;                // Champ Length correctement calculé
-
-    // Instructions
-    packet[index++] = AX_SYNC_WRITE;         // Instruction
-    packet[index++] = AX_GOAL_POSITION_L;    // Adresse de départ
-    packet[index++] = data_length_per_servo; // Longueur des données par servo
-
-    // Paramètres pour chaque servo
-    for (int i = 0; i < NumServos; i++)
+	int dataidx=0, id=0;
+    for(int servo=0; servo<total_sync_servos; servo++)
     {
-        packet[index++] = IDs[i];                          // ID du servo
-        packet[index++] = Positions[i] & 0xFF;             // Position Low Byte
-        packet[index++] = (Positions[i] >> 8) & 0xFF;      // Position High Byte
-        packet[index++] = Speed & 0xFF;                    // Speed Low Byte
-        packet[index++] = (Speed >> 8) & 0xFF;             // Speed High Byte
-    }
+		//Now write the data for the servo
+		for(int servo_data_idx=0; servo_data_idx<data_size_per_servo; servo_data_idx++)
+		{
+			temp = sync_data[dataidx];
+			Checksum += temp;
+			sendSyncData(temp);
+			dataidx++;
+		}
+    } 
 
-    // Calcul du checksum
-    unsigned char checksum = 0;
-    for (int i = 2; i < index; i++)
-    {
-        checksum += packet[i];
-    }
-    checksum = (~checksum) & 0xFF;
-    packet[index++] = checksum;
-
-    // Affichage du paquet pour débogage
-    Serial.println("Paquet syncWrite à envoyer :");
-    for (unsigned int i = 0; i < index; i++)
-    {
-        Serial.print("0x");
-        if (packet[i] < 16) Serial.print("0");
-        Serial.print(packet[i], HEX);
-        Serial.print(" ");
-    }
-    Serial.println();
-
-    // Envoi du paquet
-    sendAXPacketNoError(packet, index);
-
-    return 0; // Pas d'erreur
+	unsigned char sum = (0xff - (Checksum % 256));
+    sendSyncData(sum);
+    delayus(TX_DELAY_TIME);
+	switchCom(Direction_Pin,RX_MODE);
+	
+	if(print_data)
+		printSyncData(length, sum);
+	
 }
 
 RobyServo robyServo;

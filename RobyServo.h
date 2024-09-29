@@ -1,9 +1,3 @@
-/*
- *
- *
- *
- */
-
 #ifndef RobyServo_h
 #define RobyServo_h
 
@@ -114,15 +108,20 @@
 #define AX_CCW_AL_L                 255 
 #define AX_CCW_AL_H                 3
 #define TIME_OUT                    10
+#define TX_DELAY_TIME				300 
 #define TX_MODE                     1
 #define RX_MODE                     0
 #define LOCK                        1
+
+#define AX12_MAX_SYNCH_BUFFER_SIZE   250
+#define AX12_SYNCH_PER_SERVO_WSPEED  5
+#define AX12_SYNCH_PER_SERVO_WOSPEED 3
 
 #include <inttypes.h>
 
 class RobyServo {
 private:
-	
+
 	unsigned char Checksum;
 	unsigned char Direction_Pin;
 	unsigned char Time_Counter;
@@ -146,8 +145,11 @@ private:
 	int returned_Byte;
 
 	int read_error(void);
+	bool use_speed_synch;
 
 	HardwareSerial *varSerial;
+	int total_sync_servos;
+	unsigned char sync_data[AX12_MAX_SYNCH_BUFFER_SIZE];
 
 public:
 	void begin(long baud, unsigned char directionPin, HardwareSerial *srl);
@@ -198,7 +200,15 @@ public:
 
 	int readRegister(unsigned char ID, unsigned char reg, unsigned char reg_len);
 	
-	int syncWrite(unsigned char IDs[], int Positions[], int NumServos, int Speed);
+	void writeSyncData(bool print_data = false);
+	void sendSyncData(const uint8_t data);
+	int dataSizePerServoSynch();
+	void printSyncData(int length, unsigned char checksum);
+	void startSyncWrite(bool use_speed);
+	void addServoToSync(int id, int goal_pos, int goal_speed);
+	
+	int getLowByte(int val);
+	int getHighByte(int val);	
 };
 
 extern RobyServo robyServo;
